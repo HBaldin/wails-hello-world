@@ -13,10 +13,10 @@ jobs:
     strategy:
       matrix:
         include:
-          - os: self-hosted
+          - os: macos-latest
             goos: darwin
             goarch: arm64
-          - os: self-hosted
+          - os: ubuntu-22.04
             goos: linux
             goarch: amd64
           - os: windows-latest
@@ -50,7 +50,6 @@ jobs:
 
       - name: Extrair versão
         id: version
-        shell: bash
         run: |
           if [[ "${{ github.ref }}" == refs/tags/* ]]; then
             VERSION=${GITHUB_REF#refs/tags/}

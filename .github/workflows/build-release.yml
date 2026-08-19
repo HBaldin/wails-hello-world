@@ -1,0 +1,167 @@
+name: Build e Release
+
+on:
+  push:
+    branches:
+      - main
+    tags:
+      - 'v*'
+
+jobs:
+  build:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        include:
+          - os: macos-latest
+            goos: darwin
+            goarch: arm64
+          - os: macos-13
+            goos: darwin
+            goarch: amd64
+          - os: ubuntu-latest
+            goos: linux
+            goarch: amd64
+          - os: windows-latest
+            goos: windows
+            goarch: amd64
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configurar Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.21'
+
+      - name: Instalar dependências (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          brew install pkg-config
+
+      - name: Instalar dependências (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libgtk-3-dev libwebkit2gtk-4.0-dev
+
+      - name: Instalar Wails
+        run: go install github.com/wailsapp/wails/v2/cmd/wails@latest
+
+      - name: Instalar dependências do frontend
+        run: cd frontend && npm install && cd ..
+
+      - name: Extrair versão
+        id: version
+        run: |
+          if [[ "${{ github.ref }}" == refs/tags/* ]]; then
+            VERSION=${GITHUB_REF#refs/tags/}
+            VERSION=${VERSION#v}
+          else
+            VERSION=$(grep 'var version = ' main.go | sed 's/.*"\([^"]*\)".*/\1/')
+          fi
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+
+      - name: Build (Windows)
+        if: runner.os == 'Windows'
+        run: |
+          wails build -nsis -ldflags "-X main.version=${{ steps.version.outputs.version }}" -platform windows/amd64
+
+      - name: Build (macOS/Linux)
+        if: runner.os != 'Windows'
+        run: |
+          wails build -ldflags "-X main.version=${{ steps.version.outputs.version }}" -platform ${{ matrix.goos }}/${{ matrix.goarch }}
+
+      - name: Preparar binários (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          APP_NAME="wails-hello-world_${{ matrix.goos }}_${{ matrix.goarch }}"
+          if [ "${{ matrix.goarch }}" == "arm64" ]; then
+            cp build/bin/wails-hello-world.app/Contents/MacOS/wails-hello-world "$APP_NAME"
+          else
+            cp build/bin/wails-hello-world.app/Contents/MacOS/wails-hello-world "$APP_NAME"
+          fi
+          echo "BINARY_PATH=$APP_NAME" >> $GITHUB_ENV
+          echo "ARTIFACT_NAME=$APP_NAME" >> $GITHUB_ENV
+
+      - name: Preparar binários (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          APP_NAME="wails-hello-world_${{ matrix.goos }}_${{ matrix.goarch }}"
+          cp build/bin/wails-hello-world "$APP_NAME"
+          chmod +x "$APP_NAME"
+          echo "BINARY_PATH=$APP_NAME" >> $GITHUB_ENV
+          echo "ARTIFACT_NAME=$APP_NAME" >> $GITHUB_ENV
+
+      - name: Preparar binários (Windows)
+        if: runner.os == 'Windows'
+        run: |
+          $APP_NAME = "wails-hello-world_${{ matrix.goos }}_${{ matrix.goarch }}.exe"
+          Copy-Item "build/bin/wails-hello-world.exe" "$APP_NAME"
+          echo "BINARY_PATH=$APP_NAME" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          echo "ARTIFACT_NAME=$APP_NAME" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+
+      - name: Gerar checksum
+        shell: bash
+        run: |
+          if [ "${{ runner.os }}" == "Windows" ]; then
+            sha256sum "${{ env.BINARY_PATH }}" > "${{ env.BINARY_PATH }}.sha256"
+          else
+            shasum -a 256 "${{ env.BINARY_PATH }}" > "${{ env.BINARY_PATH }}.sha256"
+          fi
+
+      - name: Upload artefatos
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.ARTIFACT_NAME }}
+          path: |
+            ${{ env.BINARY_PATH }}
+            ${{ env.BINARY_PATH }}.sha256
+          retention-days: 30
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/v')
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download todos os artefatos
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Estruturar arquivos para release
+        run: |
+          mkdir -p release
+          for dir in artifacts/*/; do
+            cp "$dir"* release/ 2>/dev/null || true
+          done
+          ls -la release/
+
+      - name: Extrair notas de release
+        id: release_notes
+        run: |
+          VERSION=${GITHUB_REF#refs/tags/}
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "Lançamento automático para $VERSION" > release_notes.md
+          echo "" >> release_notes.md
+          echo "## Arquivos de Download" >> release_notes.md
+          echo "" >> release_notes.md
+          cd release
+          for file in *.sha256; do
+            binary="${file%.sha256}"
+            checksum=$(cat "$file" | awk '{print $1}')
+            echo "- **$binary** (SHA256: \`${checksum:0:16}...\`)" >> ../release_notes.md
+          done
+
+      - name: Criar Release
+        uses: softprops/action-gh-release@v1
+        with:
+          files: release/*
+          body_path: release_notes.md
+          draft: false
+          prerelease: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

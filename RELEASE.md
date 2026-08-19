@@ -139,6 +139,24 @@ const (
 - Garantir que `wails build` com `-ldflags` gera a versão correta
 - Testar com: `./binario --help` ou verificar em "About" no app
 
+### Erro no build Linux: "libwebkit2gtk-4.0-dev not found"
+- **Causa**: Ubuntu 24.04 usa `libwebkit2gtk-4.1-dev` (versão 4.1, não 4.0)
+- **Solução**: O workflow foi atualizado, reconstrói a tag
+- **Local**: Instale com: `sudo apt-get install libwebkit2gtk-4.1-dev`
+
+### Compilar localmente no Linux
+
+```bash
+# Ubuntu/Debian
+sudo apt-get install -y libgtk-3-dev libwebkit2gtk-4.1-dev
+
+# Fedora/RHEL
+sudo dnf install -y gtk3-devel webkit2-gtk3-devel
+
+# Arch
+sudo pacman -S gtk3 webkit2gtk
+```
+
 ## Versionamento Semântico
 
 Sempre use [Semantic Versioning](https://semver.org/) para as tags:

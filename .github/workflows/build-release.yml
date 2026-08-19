@@ -13,15 +13,9 @@ jobs:
     strategy:
       matrix:
         include:
-          - os: macos-latest
+          - os: self-hosted
             goos: darwin
             goarch: arm64
-          - os: ubuntu-22.04
-            goos: linux
-            goarch: amd64
-          - os: windows-latest
-            goos: windows
-            goarch: amd64
 
     steps:
       - uses: actions/checkout@v4

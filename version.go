@@ -11,6 +11,6 @@ var version = "0.0.0"
 
 // Defina estes para o repositório GitHub que publica lançamentos para este app.
 const (
-	updateRepoOwner = "seu-usuario-github"
+	updateRepoOwner = "HBaldin"
 	updateRepoName  = "wails-hello-world"
 )

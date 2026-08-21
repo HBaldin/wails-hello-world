@@ -1,17 +1,24 @@
 #!/bin/bash
-set -e
-
-# Script para compilar a aplicação para múltiplas plataformas
+# =============================================================================
+# build-release.sh — Script de build local para releases
+# =============================================================================
 # Uso: ./scripts/build-release.sh [versão] [plataformas]
 #
 # Exemplos:
-#   ./scripts/build-release.sh 1.0.0              # Compila tudo com versão 1.0.0
-#   ./scripts/build-release.sh 1.0.0 darwin/arm64 # Apenas macOS ARM64
+#   ./scripts/build-release.sh 1.0.0                                     # Todas as plataformas
+#   ./scripts/build-release.sh 1.0.0 darwin/arm64                        # Apenas macOS ARM64
+#   ./scripts/build-release.sh 1.0.0 "darwin/arm64 linux/amd64"          # Múltiplas
+#
+# O script gera binários e checksums SHA-256 no diretório build/releases/.
+# Use o nome do repositório do seu go.mod module.
+# =============================================================================
 
+set -euo pipefail
+
+APP_NAME="${GO_APP_NAME:-$(grep '^module ' go.mod | awk '{print $2}')}"
 VERSION="${1:-0.0.0}"
 PLATFORMS="${2:-darwin/arm64 darwin/amd64 linux/amd64 windows/amd64}"
 
-# Cores para output
 GREEN='\033[0;32m'
 BLUE='\033[0;34m'
 NC='\033[0m'
@@ -19,7 +26,7 @@ NC='\033[0m'
 BUILD_DIR="build/releases"
 mkdir -p "$BUILD_DIR"
 
-echo -e "${BLUE}=== Compilando Wails Hello World v${VERSION} ===${NC}"
+echo -e "${BLUE}=== Compilando ${APP_NAME} v${VERSION} ===${NC}"
 echo "Plataformas: $PLATFORMS"
 echo ""
 
@@ -28,46 +35,53 @@ for PLATFORM in $PLATFORMS; do
 
   echo -e "${BLUE}Compilando para $GOOS/$GOARCH...${NC}"
 
-  # Determinar nome do arquivo
+  # Nome do binário seguindo a convenção do updater
   if [ "$GOOS" = "windows" ]; then
-    BINARY_NAME="wails-hello-world_${GOOS}_${GOARCH}.exe"
+    BINARY_NAME="${APP_NAME}_${GOOS}_${GOARCH}.exe"
   else
-    BINARY_NAME="wails-hello-world_${GOOS}_${GOARCH}"
+    BINARY_NAME="${APP_NAME}_${GOOS}_${GOARCH}"
   fi
 
-  # Build
+  # Gera as bindings Go → JS antes do build (necessário sempre)
+  wails generate module
+
+  # Build com Wails
   wails build \
     -ldflags "-X main.version=${VERSION}" \
     -platform "${GOOS}/${GOARCH}" \
-    -o "${BINARY_NAME}" \
-    -skipbindings
+    -o "${BINARY_NAME}"
 
-  # Mover binário para pasta de releases
-  if [ "$GOOS" = "macos" ] || [ "$GOOS" = "darwin" ]; then
-    # No macOS, o binário fica dentro do .app
-    APP_PATH="build/bin/wails-hello-world.app/Contents/MacOS/wails-hello-world"
-    if [ -f "$APP_PATH" ]; then
-      cp "$APP_PATH" "$BUILD_DIR/$BINARY_NAME"
+  # Localiza o binário gerado (o Wails coloca em build/bin/)
+  SRC=""
+  if [ "$GOOS" = "darwin" ] || [ "$GOOS" = "macos" ]; then
+    BUNDLE=$(find build/bin -name '*.app' -type d -maxdepth 2 2>/dev/null | head -1)
+    if [ -n "$BUNDLE" ]; then
+      SRC="$BUNDLE/Contents/MacOS/$(basename "$BUNDLE" .app)"
     fi
-  elif [ "$GOOS" = "linux" ]; then
-    if [ -f "build/bin/wails-hello-world" ]; then
-      cp "build/bin/wails-hello-world" "$BUILD_DIR/$BINARY_NAME"
-      chmod +x "$BUILD_DIR/$BINARY_NAME"
-    fi
-  elif [ "$GOOS" = "windows" ]; then
-    if [ -f "build/bin/wails-hello-world.exe" ]; then
-      cp "build/bin/wails-hello-world.exe" "$BUILD_DIR/$BINARY_NAME"
-    fi
-  fi
-
-  # Gerar checksum
-  if command -v shasum &> /dev/null; then
-    shasum -a 256 "$BUILD_DIR/$BINARY_NAME" > "$BUILD_DIR/$BINARY_NAME.sha256"
   else
-    sha256sum "$BUILD_DIR/$BINARY_NAME" > "$BUILD_DIR/$BINARY_NAME.sha256"
+    CANDIDATE="build/bin/${APP_NAME}"
+    [ "$GOOS" = "windows" ] && CANDIDATE="build/bin/${APP_NAME}.exe"
+    [ -f "$CANDIDATE" ] && SRC="$CANDIDATE"
   fi
 
-  echo -e "${GREEN}✓ Compilado: $BUILD_DIR/$BINARY_NAME${NC}"
+  if [ -z "$SRC" ] || [ ! -f "$SRC" ]; then
+    echo "  ⚠ Binário não encontrado em build/bin/. Tentando path alternativo..."
+    # Fallback: procurar no diretório de output
+    SRC=$(find build -name "$BINARY_NAME" -type f 2>/dev/null | head -1)
+  fi
+
+  if [ -z "$SRC" ] || [ ! -f "$SRC" ]; then
+    echo "  ❌ Binário não encontrado para $GOOS/$GOARCH"
+    exit 1
+  fi
+
+  cp "$SRC" "$BUILD_DIR/$BINARY_NAME"
+  chmod +x "$BUILD_DIR/$BINARY_NAME"
+
+  # Gerar checksum SHA-256
+  sha256sum "$BUILD_DIR/$BINARY_NAME" > "$BUILD_DIR/$BINARY_NAME.sha256"
+
+  echo -e "${GREEN}✓ $BUILD_DIR/$BINARY_NAME${NC}"
   cat "$BUILD_DIR/$BINARY_NAME.sha256"
   echo ""
 done

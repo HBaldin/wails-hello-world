@@ -2,35 +2,47 @@
 
 ## Visão Geral
 
-Este projeto usa GitHub Actions para compilar automaticamente e criar releases no padrão correto para o auto-updater. Quando você faz push de uma tag para o GitHub, o workflow:
+Este projeto usa GitHub Actions para compilar automaticamente e criar releases
+no padrão correto para o auto-updater. Quando você faz push de uma tag `v*`,
+o workflow:
 
-1. Compila a aplicação para múltiplas plataformas
+1. Compila a aplicação para 4 plataformas (macOS ARM64, macOS AMD64,
+   Linux AMD64, Windows AMD64)
 2. Gera checksums SHA256 para cada binário
 3. Cria um release no GitHub com todos os arquivos
 
-## Configuração Inicial
+## 🔧 Configuração Inicial
 
-### 1. Atualizar o repositório em version.go
+### 1. Executar o script de inicialização
+
+```bash
+./scripts/init-template.sh
+```
+
+Isso atualiza: módulo Go, nome do app, versão, repositório GitHub, e imports.
+
+### 2. Alternativa manual
 
 Edite `version.go` com seu repositório GitHub real:
 
 ```go
 const (
-	updateRepoOwner = "seu-usuario-github"
-	updateRepoName  = "wails-hello-world"
+    updateRepoOwner = "seu-usuario"
+    updateRepoName  = "meu-app"
 )
 ```
 
-### 2. Criar um Personal Access Token (PAT)
+### 3. Verificar permissões do GitHub Actions
 
-O workflow usa `GITHUB_TOKEN` que já vem pré-configurado, então não precisa de setup adicional.
+O workflow usa `GITHUB_TOKEN` que já vem pré-configurado — nenhum setup adicional
+é necessário.
 
-## Como Publicar uma Nova Versão
+## 🚀 Como Publicar uma Nova Versão
 
-### Opção 1: Via Git (Recomendado)
+### Via Git (Recomendado)
 
 ```bash
-# 1. Atualizar version.go com a nova versão
+# 1. Atualizar version.go com a nova versão (opcional)
 # Edite a linha: var version = "1.0.0"
 
 # 2. Commit das alterações
@@ -43,119 +55,113 @@ git tag -a v1.0.0 -m "Release 1.0.0"
 git push origin v1.0.0
 ```
 
-### Opção 2: Script Local (Para Testes)
+### Script Local (Para Testes)
 
 ```bash
-# Compilar localmente para todas as plataformas
-chmod +x scripts/build-release.sh
 ./scripts/build-release.sh 1.0.0
-
-# Os binários estarão em: build/releases/
-ls -la build/releases/
+# Binários em: build/releases/
 ```
 
-## Padrão de Nomenclatura
+## 📦 Padrão de Nomenclatura
 
 O workflow cria automaticamente arquivos com o padrão:
 
 ```
-wails-hello-world_<GOOS>_<GOARCH>[.exe]
-wails-hello-world_<GOOS>_<GOARCH>[.exe].sha256
+<nome-repo>_<GOOS>_<GOARCH>[.exe]
+<nome-repo>_<GOOS>_<GOARCH>[.exe].sha256
 ```
 
 ### Exemplos:
-- **macOS ARM64**: `wails-hello-world_darwin_arm64` + `wails-hello-world_darwin_arm64.sha256`
-- **macOS Intel**: `wails-hello-world_darwin_amd64` + `wails-hello-world_darwin_amd64.sha256`
-- **Linux**: `wails-hello-world_linux_amd64` + `wails-hello-world_linux_amd64.sha256`
-- **Windows**: `wails-hello-world_windows_amd64.exe` + `wails-hello-world_windows_amd64.exe.sha256`
 
-## Workflow do GitHub Actions
+- **macOS ARM64**: `meu-app_darwin_arm64` + `meu-app_darwin_arm64.sha256`
+- **macOS Intel**: `meu-app_darwin_amd64` + `meu-app_darwin_amd64.sha256`
+- **Linux**: `meu-app_linux_amd64` + `meu-app_linux_amd64.sha256`
+- **Windows**: `meu-app_windows_amd64.exe` + `meu-app_windows_amd64.exe.sha256`
 
-### Quando é Disparado?
+## ⚙️ Workflow do GitHub Actions
 
-- ✅ **Push de tag** (`v*`): Cria o release automaticamente
-- ℹ️ **Push para main**: Apenas compila (sem criar release)
+### Gatilhos
+
+| Evento | Ação |
+|---|---|
+| Push de tag `v*` | Compila + publica release |
+| Push para `main` | Apenas compila (validação, sem release) |
 
 ### Plataformas Compiladas
 
-| OS | Arquitetura | Runner | Binário |
-|---|---|---|---|
-| macOS | ARM64 | `macos-latest` | `darwin_arm64` |
-| macOS | x86_64 | `macos-13` | `darwin_amd64` |
-| Linux | x86_64 | `ubuntu-latest` | `linux_amd64` |
-| Windows | x86_64 | `windows-latest` | `windows_amd64` |
+| OS | Arquitetura | Runner |
+|---|---|---|
+| macOS | ARM64 | `macos-latest` |
+| macOS | x86_64 | `macos-13` |
+| Linux | x86_64 | `ubuntu-22.04` |
+| Windows | x86_64 | `windows-latest` |
 
-## Testando o Auto-Update
+## 🧪 Testando o Auto-Update
 
-### 1. Compilar versão 1.0.0 Localmente
-
-```bash
-./scripts/build-release.sh 1.0.0
-```
-
-### 2. Criar um Release de Teste
-
-Se quiser testar sem publicar um release real:
+### 1. Compilar versão local
 
 ```bash
-# Criar release local
-gh release create v1.0.0 build/releases/* --draft
+./scripts/build-release.sh 0.1.0
 ```
 
-### 3. Configurar version.go para Seu Repositório
+### 2. Subir como release de teste
+
+```bash
+gh release create v0.1.0 build/releases/* --draft
+```
+
+### 3. Configurar version.go para seu repositório (se ainda não fez)
 
 ```go
 const (
-	updateRepoOwner = "seu-usuario"
-	updateRepoName  = "wails-hello-world"
+    updateRepoOwner = "seu-usuario"
+    updateRepoName  = "meu-app"
 )
 ```
 
-### 4. Executar a Versão Antiga
+### 4. Executar a versão antiga
 
 ```bash
-./build/releases/wails-hello-world_darwin_arm64
+./build/releases/meu-app_darwin_arm64
 ```
 
-### 5. Testar no App
+### 5. Testar no app
 
 1. Clique em "Check for Update"
-2. Deve detectar a versão 1.0.0 (ou a versão que subiu no release)
+2. Deve detectar a versão 0.1.0 (ou a versão do release)
 3. Clique em "Install Update"
 4. O app fará download e reiniciará com a nova versão
 
-## Resolução de Problemas
+## 🐛 Resolução de Problemas
 
 ### Release não foi criado
-- Verificar se a tag foi feita no formato `v*` (ex: `v1.0.0`)
+
+- Verificar se a tag tem formato `v*` (ex: `v1.0.0`)
 - Ver logs em "Actions" no GitHub
+- Verificar se o workflow `fail_on_unmatched_files: true` não falhou
 
 ### Auto-update não encontra a versão
+
 - Verificar se `updateRepoOwner` e `updateRepoName` em `version.go` estão corretos
 - Verificar se os binários no release seguem o padrão de nomenclatura
-- Verificar se há arquivo `.sha256` para o binário
-
-### Binário não funciona em produção
-- Garantir que `wails build` com `-ldflags` gera a versão correta
-- Testar com: `./binario --help` ou verificar em "About" no app
+- Verificar se há arquivo `.sha256` para cada binário
 
 ### Erro no build Linux: "libwebkit2gtk-4.0-dev not found"
-- **Causa**: Ubuntu 24.04 usa `libwebkit2gtk-4.1-dev` (versão 4.1, não 4.0)
-- **Solução**: O workflow foi atualizado, reconstrói a tag
-- **Local**: Instale com: `sudo apt-get install libwebkit2gtk-4.1-dev`
 
-### Compilar localmente no Linux
+**Causa**: Ubuntu 24.04+ usa `libwebkit2gtk-4.1-dev` (versão 4.1, não 4.0).
+
+**Solução**: O workflow já usa `libwebkit2gtk-4.1-dev`. Para build local:
 
 ```bash
-# Ubuntu/Debian
-sudo apt-get install -y libgtk-3-dev libwebkit2gtk-4.1-dev
-
-# Fedora/RHEL
-sudo dnf install -y gtk3-devel webkit2-gtk3-devel
-
-# Arch
-sudo pacman -S gtk3 webkit2gtk
+sudo apt-get install libwebkit2gtk-4.1-dev
 ```
+
+### Erro de checksum no auto-update
+
+O checksum SHA-256 é gerado com `sha256sum`. Verifique:
+
+- O formato do arquivo `.sha256` é `<hex>  <nome-do-arquivo>`
+- O checksum corresponde exatamente ao binário baixado
 
 ## Versionamento Semântico
 
@@ -166,9 +172,8 @@ v MAJOR . MINOR . PATCH
 v 1     . 2      . 3
 
 v1.0.0  ✅ Correto
-1.0.0   ❌ Sem 'v' (o workflow ainda funciona, mas use 'v')
+1.0.0   ✅ Aceito (mas prefira com 'v')
 v1.0    ❌ Sem patch
-v1      ❌ Sem minor
 ```
 
 ## Customizações Futuras
@@ -179,15 +184,15 @@ Para adicionar novas plataformas, edite `.github/workflows/build-release.yml`:
 strategy:
   matrix:
     include:
-      # Adicione novos items aqui
-      - os: self-hosted
-        goos: linux
-        goarch: arm64
+      - os: [novo-runner]
+        goos: [novo-os]
+        goarch: [nova-arch]
 ```
 
 ## Referências
 
 - [Documentação Wails - Building](https://wails.io/docs/guides/building/)
-- [Documentação Wails - Self Update](https://wails.io/docs/guides/development/)
-- [GitHub Actions Documentation](https://docs.github.com/en/actions)
+- [Documentação Wails](https://wails.io/docs/next/)
+- [minio/selfupdate](https://github.com/minio/selfupdate)
+- [GitHub Actions](https://docs.github.com/en/actions)
 - [Semantic Versioning](https://semver.org/)

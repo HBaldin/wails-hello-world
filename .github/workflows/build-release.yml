@@ -1,3 +1,23 @@
+# =============================================================================
+# Wails Auto-Update Template — GitHub Actions Workflow
+# =============================================================================
+# Este workflow compila a aplicação Wails para múltiplas plataformas e — quando
+# uma tag v* é empurrada — publica um GitHub Release com os binários prontos
+# para o auto-updater interno.
+#
+# Gatilhos:
+#   - Push para main         → apenas compila (validação).
+#   - Push de tag v*          → compila + publica release.
+#
+# Convenção de nomenclatura dos assets (consumida pelo updater):
+#   <repo>_<GOOS>_<GOARCH>[.exe]            binário
+#   <repo>_<GOOS>_<GOARCH>[.exe].sha256     checksum SHA-256
+#
+# Uso:
+#   git tag -a v1.0.0 -m "Release v1.0.0"
+#   git push origin v1.0.0
+# =============================================================================
+
 name: Build e Release
 
 on:
@@ -16,11 +36,11 @@ jobs:
           - os: macos-latest
             goos: darwin
             goarch: arm64
-          - os: macos-13
-            goos: darwin
-            goarch: amd64
           - os: ubuntu-22.04
             goos: linux
+            goarch: amd64
+          - os: windows-latest
+            goos: windows
             goarch: amd64
 
     steps:
@@ -29,20 +49,24 @@ jobs:
       - name: Configurar Go
         uses: actions/setup-go@v5
         with:
-          go-version: '1.21'
+          go-version: '1.25'
+
+      - name: Instalar dependências (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libgtk-3-dev \
+            libwebkit2gtk-4.1-dev \
+            build-essential \
+            pkg-config
 
       - name: Instalar dependências (macOS)
         if: runner.os == 'macOS'
         run: |
           brew install pkg-config
 
-      - name: Instalar dependências (Linux)
-        if: runner.os == 'Linux'
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y libgtk-3-dev libwebkit2gtk-4.0-dev
-
-      - name: Instalar Wails
+      - name: Instalar Wails CLI
         run: go install github.com/wailsapp/wails/v2/cmd/wails@latest
 
       - name: Instalar dependências do frontend
@@ -58,60 +82,83 @@ jobs:
           else
             VERSION=$(grep 'var version = ' version.go | sed 's/.*"\([^"]*\)".*/\1/')
           fi
-          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: Build (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          wails build \
+            -ldflags "-X main.version=${{ steps.version.outputs.version }}" \
+            -platform ${{ matrix.goos }}/${{ matrix.goarch }}
+
+      - name: Build (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          wails build \
+            -ldflags "-X main.version=${{ steps.version.outputs.version }}" \
+            -platform ${{ matrix.goos }}/${{ matrix.goarch }}
 
       - name: Build (Windows)
         if: runner.os == 'Windows'
         run: |
-          wails build -nsis -ldflags "-X main.version=${{ steps.version.outputs.version }}" -platform windows/amd64
+          wails build \
+            -ldflags "-X main.version=${{ steps.version.outputs.version }}" \
+            -platform windows/amd64 \
+            -nsis
 
-      - name: Build (macOS/Linux)
-        if: runner.os != 'Windows'
-        run: |
-          wails build -ldflags "-X main.version=${{ steps.version.outputs.version }}" -platform ${{ matrix.goos }}/${{ matrix.goarch }}
-
-      - name: Preparar binários (macOS)
+      - name: Preparar binário (macOS)
         if: runner.os == 'macOS'
+        shell: bash
         run: |
-          APP_NAME="wails-hello-world_${{ matrix.goos }}_${{ matrix.goarch }}"
-          if [ "${{ matrix.goarch }}" == "arm64" ]; then
-            cp build/bin/wails-hello-world.app/Contents/MacOS/wails-hello-world "$APP_NAME"
+          APP_NAME="${{ github.event.repository.name }}_${{ matrix.goos }}_${{ matrix.goarch }}"
+          SRC="build/bin/${{ github.event.repository.name }}.app/Contents/MacOS/${{ github.event.repository.name }}"
+          if [ -f "$SRC" ]; then
+            cp "$SRC" "$APP_NAME"
           else
-            cp build/bin/wails-hello-world.app/Contents/MacOS/wails-hello-world "$APP_NAME"
+            # fallback: procurar qualquer app bundle
+            BUNDLE=$(find build/bin -name '*.app' -type d | head -1)
+            if [ -n "$BUNDLE" ]; then
+              cp "$BUNDLE/Contents/MacOS/$(basename "$BUNDLE" .app)" "$APP_NAME"
+            else
+              echo "::error::macOS binary not found in build/bin/"
+              exit 1
+            fi
           fi
-          echo "BINARY_PATH=$APP_NAME" >> $GITHUB_ENV
-          echo "ARTIFACT_NAME=$APP_NAME" >> $GITHUB_ENV
+          echo "BINARY_PATH=$APP_NAME" >> "$GITHUB_ENV"
 
-      - name: Preparar binários (Linux)
+      - name: Preparar binário (Linux)
         if: runner.os == 'Linux'
+        shell: bash
         run: |
-          APP_NAME="wails-hello-world_${{ matrix.goos }}_${{ matrix.goarch }}"
-          cp build/bin/wails-hello-world "$APP_NAME"
-          chmod +x "$APP_NAME"
-          echo "BINARY_PATH=$APP_NAME" >> $GITHUB_ENV
-          echo "ARTIFACT_NAME=$APP_NAME" >> $GITHUB_ENV
+          APP_NAME="${{ github.event.repository.name }}_${{ matrix.goos }}_${{ matrix.goarch }}"
+          SRC="build/bin/${{ github.event.repository.name }}"
+          if [ -f "$SRC" ]; then
+            cp "$SRC" "$APP_NAME"
+            chmod +x "$APP_NAME"
+          else
+            echo "::error::Linux binary not found in build/bin/"
+            exit 1
+          fi
+          echo "BINARY_PATH=$APP_NAME" >> "$GITHUB_ENV"
 
-      - name: Preparar binários (Windows)
+      - name: Preparar binário (Windows)
         if: runner.os == 'Windows'
+        shell: pwsh
         run: |
-          $APP_NAME = "wails-hello-world_${{ matrix.goos }}_${{ matrix.goarch }}.exe"
-          Copy-Item "build/bin/wails-hello-world.exe" "$APP_NAME"
-          echo "BINARY_PATH=$APP_NAME" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
-          echo "ARTIFACT_NAME=$APP_NAME" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          $AppName = "${{ github.event.repository.name }}_${{ matrix.goos }}_${{ matrix.goarch }}.exe"
+          $Src = "build\bin\${{ github.event.repository.name }}.exe"
+          Copy-Item $Src $AppName
+          echo "BINARY_PATH=$AppName" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
 
       - name: Gerar checksum
         shell: bash
         run: |
-          if [ "${{ runner.os }}" == "Windows" ]; then
-            sha256sum "${{ env.BINARY_PATH }}" > "${{ env.BINARY_PATH }}.sha256"
-          else
-            shasum -a 256 "${{ env.BINARY_PATH }}" > "${{ env.BINARY_PATH }}.sha256"
-          fi
+          sha256sum "${{ env.BINARY_PATH }}" > "${{ env.BINARY_PATH }}.sha256"
 
       - name: Upload artefatos
         uses: actions/upload-artifact@v4
         with:
-          name: ${{ env.ARTIFACT_NAME }}
+          name: ${{ github.event.repository.name }}_${{ matrix.goos }}_${{ matrix.goarch }}
           path: |
             ${{ env.BINARY_PATH }}
             ${{ env.BINARY_PATH }}.sha256
@@ -131,35 +178,43 @@ jobs:
           path: artifacts
 
       - name: Estruturar arquivos para release
+        shell: bash
         run: |
           mkdir -p release
+          # artifacts/<artifact-name>/ contém os arquivos
           for dir in artifacts/*/; do
             cp "$dir"* release/ 2>/dev/null || true
           done
           ls -la release/
+          echo "---"
+          echo "Arquivos no diretório release:"
+          find release -type f
 
       - name: Extrair notas de release
         id: release_notes
+        shell: bash
         run: |
           VERSION=${GITHUB_REF#refs/tags/}
-          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
           echo "Lançamento automático para $VERSION" > release_notes.md
           echo "" >> release_notes.md
           echo "## Arquivos de Download" >> release_notes.md
           echo "" >> release_notes.md
           cd release
           for file in *.sha256; do
+            [ -f "$file" ] || continue
             binary="${file%.sha256}"
             checksum=$(cat "$file" | awk '{print $1}')
             echo "- **$binary** (SHA256: \`${checksum:0:16}...\`)" >> ../release_notes.md
           done
 
       - name: Criar Release
-        uses: softprops/action-gh-release@v1
+        uses: softprops/action-gh-release@v2
         with:
           files: release/*
           body_path: release_notes.md
           draft: false
           prerelease: false
+          fail_on_unmatched_files: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

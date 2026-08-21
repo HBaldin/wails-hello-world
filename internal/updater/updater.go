@@ -6,15 +6,27 @@
 // and replaces the currently running executable with it (via
 // github.com/minio/selfupdate).
 //
-// Release assets are expected to follow the naming convention produced by
-// goreleaser-style pipelines:
+// Release assets are expected to follow the naming convention:
 //
 //	<repo>_<GOOS>_<GOARCH>[.exe]        the binary for the platform
 //	<repo>_<GOOS>_<GOARCH>[.exe].sha256 a text file containing its hex SHA-256
+//
+// The workflow in .github/workflows/build-release.yml produces assets in this
+// exact format automatically.
+//
+// # macOS note
+//
+// On macOS the running executable is inside a .app bundle and may be code
+// signed. minio/selfupdate replaces the binary in-place, which invalidates
+// the ad-hoc signature Apple applies to Wails binaries on first launch.
+// The binary still runs, but macOS may warn the user. For distribution,
+// sign the binary with a Developer ID and notarize it. See the RELEASE.md
+// guide for details.
 package updater
 
 import (
 	"context"
+	"crypto"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -34,8 +46,10 @@ type Config struct {
 	// RepoOwner and RepoName identify the GitHub repository that publishes releases.
 	RepoOwner string
 	RepoName  string
+
 	// CurrentVersion is the version of the running binary, e.g. "1.2.3" or "v1.2.3".
 	CurrentVersion string
+
 	// HTTPClient is used for all network calls. If nil, a client with a
 	// reasonable timeout is created.
 	HTTPClient *http.Client
@@ -48,7 +62,7 @@ func (c Config) httpClient() *http.Client {
 	return &http.Client{Timeout: 30 * time.Second}
 }
 
-// Release describes an available update.
+// Release describes an available update found by CheckForUpdate.
 type Release struct {
 	Version     string `json:"version"`
 	Notes       string `json:"notes"`
@@ -91,6 +105,8 @@ func CheckForUpdate(ctx context.Context, cfg Config) (*Release, error) {
 		return nil, err
 	}
 	req.Header.Set("Accept", "application/vnd.github+json")
+	// GitHub API requires a User-Agent header.
+	req.Header.Set("User-Agent", fmt.Sprintf("%s-updater/1.0", cfg.RepoName))
 
 	resp, err := cfg.httpClient().Do(req)
 	if err != nil {
@@ -169,7 +185,11 @@ func Apply(ctx context.Context, cfg Config, rel *Release) error {
 		return fmt.Errorf("download update: unexpected status %s", resp.Status)
 	}
 
-	opts := selfupdate.Options{Checksum: checksum}
+	opts := selfupdate.Options{
+		Checksum: checksum,
+		// Use SHA-256 explicitly for hash verification.
+		Hash: crypto.SHA256,
+	}
 	if err := selfupdate.Apply(resp.Body, opts); err != nil {
 		if rerr := selfupdate.RollbackError(err); rerr != nil {
 			return fmt.Errorf("update failed and rollback failed: %v (original error: %w)", rerr, err)
